@@ -8,6 +8,13 @@ var vertexCount = 0;
 var uniformModelViewLoc = null;
 var uniformProjectionLoc = null;
 var heightmapData = null;
+var imageArray;
+var arraySize;
+var deltaX = 0;
+var deltaY = 0;
+var scrollVal = 50;
+var rightX = 0;
+var rightY = 0;
 
 function processImage(img)
 {
@@ -56,10 +63,9 @@ function processImage(img)
 
 window.loadImageFile = function(event)
 {
-
 	var f = event.target.files && event.target.files[0];
 	if (!f) return;
-	
+	//console.log("File reading started");
 	// create a FileReader to read the image file
 	var reader = new FileReader();
 	reader.onload = function() 
@@ -79,7 +85,33 @@ window.loadImageFile = function(event)
 					heightmapData.width: width of map (number of columns)
 					heightmapData.height: height of the map (number of rows)
 			*/
+			//parse heightmapData (it only contains the brighness value for each point) into an array of triangles (3 points with 3 directions (XYZ) each), parse brightness as Y coordinate
+			// use pattern of P1, P3, P2, P2, P3, P4 for each triangle pair (counterclockwise), repeat for rest of row and for all rows
+			var tempWidth = heightmapData.width;
+			var tempHeight = heightmapData.height;
+			var incrementValue;
+			var vIncrementValue;
+			var newI;
+			var newJ;
+			imageArray = [];
+			console.log("tempWidth: " +tempWidth+" tempHeight: " +tempHeight + " incrementValue: " +incrementValue + " vIncrementValue: " +vIncrementValue);
+			for(var j = 0; j < tempHeight-1; j++){
+				for(var i = 0; i < tempWidth-1; i++){ //for each set of 4 points, add to array 2 triangles ((P1, P3, P2), (P2, P3, P4)) with each of the points being in the format of (X, height, Z)
+					newI = ((i/tempWidth)*2)-1;
+					newJ = ((j/tempHeight)*2)-1;
+					incrementValue = (((i+1)/tempWidth)*2)-1;
+					vIncrementValue = (((j+1)/tempHeight)*2)-1;
+					imageArray.push(newI, heightmapData.data[(i + j*tempWidth)], newJ); //triangle 1 P1
+					imageArray.push(newI, heightmapData.data[(i + (j+1)*tempWidth)], vIncrementValue); //triangle 1 P3
+					imageArray.push(incrementValue, heightmapData.data[((i+1) + j*tempWidth)], newJ); //triangle 1 P2
+					imageArray.push(incrementValue, heightmapData.data[((i+1) + j*tempWidth)], newJ); //triangle 2 P2
+					imageArray.push(newI, heightmapData.data[(i + (j+1)*tempWidth)], vIncrementValue); //triangle 2 P3
+					imageArray.push(incrementValue, heightmapData.data[((i+1) + (j+1)*tempWidth)], vIncrementValue); //triangle 2 P4
+				}
+			}
+			arraySize = imageArray.length;
 			console.log('loaded image: ' + heightmapData.width + ' x ' + heightmapData.height);
+			initialize();
 
 		};
 		img.onerror = function() 
@@ -115,24 +147,35 @@ function draw()
 	var nearClip = 0.001;
 	var farClip = 20.0;
 
-	// perspective projection
-	var projectionMatrix = perspectiveMatrix(
-		fovRadians,
-		aspectRatio,
-		nearClip,
-		farClip,
-	);
+	var projectionMatrix;
+	if (document.querySelector("#projection").value == 'perspective'){
+		// perspective projection
+		var projectionMatrix = perspectiveMatrix(
+			fovRadians,
+			aspectRatio,
+			nearClip,
+			farClip,
+		);
+	}
+	else{
+		projectionMatrix = orthographicMatrix(-4*aspectRatio, 4*aspectRatio, -4, 4, nearClip, farClip);
+	}
 
 	// eye and target
-	var eye = [0, 5, 5];
-	var target = [0, 0, 0];
+	var targetVal = scrollVal/10; //slow down the speed of scrolling
+	var panValX = rightX/10; //show down the speed of moving the panning
+	var panValZ = rightY/10;
+	var eye = [panValX, targetVal, targetVal + panValZ]; //accomplish zooming by moving just the target, accomplish panning by moving both the eye and the target simultaneously 
+	var target = [panValX, 0, panValZ];
 
-	var modelMatrix = identityMatrix();
-
+	var heightInput = (parseInt(document.querySelector("#height").value)/25); //grab the height scale input and scale it to be smaller
 	// TODO: set up transformations to the model
+	var rotatedXMatrix = rotateXMatrix(-deltaY/50); //find rotation matrixies of X and Y seperatly
+	var rotatedYMatrix = rotateYMatrix(-deltaX/50);
+	var rotatedXYMatrix = multiplyMatrices(rotatedXMatrix,rotatedYMatrix); //multiply the rotated matrixies together to find the full rotation of the object
+	var modelMatrix = multiplyMatrices(rotatedXYMatrix,scaleMatrix(2,heightInput,2)); //scale X and Z statically, scale Y ising the height slider
 
 	// setup viewing matrix
-	var eyeToTarget = subtract(target, eye);
 	var viewMatrix = setupViewMatrix(eye, target);
 
 	// model-view Matrix = view * model
@@ -146,7 +189,7 @@ function draw()
 	gl.disable(gl.CULL_FACE);
 
 	gl.clearColor(0.2, 0.2, 0.2, 1);
-	gl.clear(gl.COLOR_BUFFER_BIT);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
 	gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 	gl.useProgram(program);
@@ -157,7 +200,12 @@ function draw()
 
 	gl.bindVertexArray(vao);
 	
-	var primitiveType = gl.TRIANGLES;
+	if(document.querySelector("#isWireframe").checked){ //check the status of the wireframe checkbox, apply wireframe to model if checked
+		var primitiveType = gl.LINES;
+	}
+	else{
+		var primitiveType = gl.TRIANGLES;
+	}
 	gl.drawArrays(primitiveType, 0, vertexCount);
 
 	requestAnimationFrame(draw);
@@ -256,11 +304,17 @@ function addMouseCallback(canvas)
 
 		if (e.deltaY < 0) 
 		{
-			console.log("Scrolled up");
+			console.log("Scrolled up"); //cap zoom input range to 10-100
 			// e.g., zoom in
+			if(scrollVal > 10){
+				scrollVal -= 1;
+			}
 		} else {
 			console.log("Scrolled down");
 			// e.g., zoom out
+			if(scrollVal < 100){
+				scrollVal += 1;
+			}
 		}
 	});
 
@@ -269,8 +323,15 @@ function addMouseCallback(canvas)
 		var currentX = e.offsetX;
 		var currentY = e.offsetY;
 
-		var deltaX = currentX - startX;
-		var deltaY = currentY - startY;
+		if(leftMouse == true){ //differentiate which set of X and Y global variables to send the X and Y location data from the mouse based on which click is used
+			deltaX = currentX - startX;
+			deltaY = currentY - startY;
+		}
+		else{
+			rightX = currentX - startX;
+			rightY = currentY - startY;
+			console.log('mouse drag by: ' +rightX);
+		}
 		console.log('mouse drag by: ' + deltaX + ', ' + deltaY);
 
 		// implement dragging logic
@@ -285,7 +346,32 @@ function addMouseCallback(canvas)
 	});
 }
 
-function initialize() 
+function initialize() //only called upon file load, feeds the new vertex data into array buffer
+{
+	vertexCount = arraySize/3;		// vertexCount is global variable used by draw()
+
+	// create buffers to put in box
+	var meshVertices = new Float32Array(imageArray);
+	var posBuffer = createBuffer(gl, gl.ARRAY_BUFFER, meshVertices);
+
+	// attributes (per vertex)
+	var posAttribLoc = gl.getAttribLocation(program, "position");
+
+	vao = createVAO(gl, 
+		// positions
+		posAttribLoc, posBuffer, 
+
+		// normals (unused in this assignments)
+		null, null, 
+
+		// colors (not needed--computed by shader)
+		null, null
+	);
+
+	window.requestAnimationFrame(draw);
+}
+
+function initialize2() // initialises the box on startup of page, only called once in program
 {
 	var canvas = document.querySelector("#glcanvas");
 	canvas.width = canvas.clientWidth;
@@ -329,4 +415,4 @@ function initialize()
 	window.requestAnimationFrame(draw);
 }
 
-window.onload = initialize();
+window.onload = initialize2();
