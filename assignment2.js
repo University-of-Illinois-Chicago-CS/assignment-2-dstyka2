@@ -348,7 +348,7 @@ function addMouseCallback(canvas)
 
 function initialize() //only called upon file load, feeds the new vertex data into array buffer
 {
-	vertexCount = arraySize;		// vertexCount is global variable used by draw()
+	vertexCount = arraySize/3;		// vertexCount is global variable used by draw()
 
 	// create buffers to put in box
 	var meshVertices = new Float32Array(imageArray);
